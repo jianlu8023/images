@@ -1,0 +1,43 @@
+ARG ALPINE_ORI=dl-cdn.alpinelinux.org
+
+FROM alpine:3.22 AS builder
+
+ENV OPENSSL_VERSION=openssl-4.0.2
+# 设置通用的安全编译选项
+# 这些选项从你的系统信息中提取，并适用于大多数现代 GCC 环境
+ENV CFLAGS="-fstack-protector-strong -Wformat -Werror=format-security -D_FORTIFY_SOURCE=2"
+
+RUN sed -i "s/dl-cdn.alpinelinux.org/mirrors.aliyun.com/g" /etc/apk/repositories && \
+    apk add --no-cache \
+    git linux-headers build-base \
+    ca-certificates curl wget perl
+
+WORKDIR /usr/local/src
+
+RUN git clone -b $OPENSSL_VERSION --depth=1 https://github.com/openssl/openssl.git $OPENSSL_VERSION
+
+WORKDIR /usr/local/src/$OPENSSL_VERSION
+
+RUN ./config --prefix=/usr/local/ssl \
+    --openssldir=/usr/local/ssl \
+    -Wl,-rpath,/usr/local/ssl/lib \
+    -no-shared -fPIC && \
+    make -j$(nproc) && \
+    make install
+
+FROM alpine:3.22 AS product
+
+RUN sed -i "s/dl-cdn.alpinelinux.org/mirrors.aliyun.com/g" /etc/apk/repositories && \
+    apk add --no-cache \
+    ca-certificates tzdata && \
+    echo "Asia/Shanghai" > /etc/timezone && \
+    ln -sf /usr/share/zoneinfo/Asia/Shanghai /etc/localtime
+
+COPY --from=builder /usr/local/ssl /usr/local/ssl
+
+ENV TZ=Asia/Shanghai
+ENV PATH=/usr/local/ssl/bin:$PATH
+
+WORKDIR /workspace
+
+CMD ["openssl","version","-a"]
