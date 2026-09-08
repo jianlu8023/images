@@ -1,0 +1,18 @@
+/var/log/angie/*.log {
+    daily
+    rotate 14
+    missingok
+    notifempty
+    compress
+    delaycompress
+    dateext
+    dateformat -%Y%m%d
+    create 0640 angie angie
+    sharedscripts
+    postrotate
+        # SIGUSR1 让 angie 重新打开日志文件（等价于 angie -s reopen）
+        if [ -f /run/angie/angie.pid ]; then
+            kill -USR1 "$(cat /run/angie/angie.pid)" 2>/dev/null || true
+        fi
+    endscript
+}

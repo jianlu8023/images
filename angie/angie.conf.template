@@ -1,0 +1,89 @@
+{{ $modules := .Env.ANGIE_LOAD_MODULES | strings.Split " " }}
+
+{{- if has $modules "brotli"}}
+# package: angie-module-brotli
+load_module modules/ngx_http_brotli_filter_module.so;
+load_module modules/ngx_http_brotli_static_module.so;
+{{end}}
+
+{{- if has $modules "headers-more"}}
+# package: angie-module-headers-more
+load_module modules/ngx_http_headers_more_filter_module.so;
+{{end}}
+
+{{- if has $modules "echo"}}
+# package: angie-module-echo
+load_module modules/ngx_http_echo_module.so;
+{{end}}
+
+{{- if has $modules "subs"}}
+# package: angie-module-subs
+load_module modules/ngx_http_subs_filter_module.so;
+{{end}}
+
+{{- if has $modules "cache-purge"}}
+# package: angie-module-cache-purge
+load_module modules/ngx_http_cache_purge_module.so;
+{{end}}
+
+{{- if has $modules "dav-ext"}}
+# package: angie-module-dav-ext
+load_module modules/ngx_http_dav_ext_module.so;
+{{end}}
+
+{{- if or (has $modules "ndk") (has $modules "set-misc")}}
+# package: angie-module-ndk
+load_module modules/ndk_http_module.so;
+{{end}}
+
+{{- if has $modules "set-misc"}}
+# package: angie-module-set-misc
+load_module modules/ngx_http_set_misc_module.so;
+{{end}}
+
+user  angie;
+worker_processes {{.Env.ANGIE_WORKER_PROCESSES}};
+worker_rlimit_nofile {{.Env.ANGIE_WORKER_RLIMIT_NOFILE}};
+
+{{- if eq (getenv "ANGIE_ERROR_LOG_TO_FILE" "off") "on" }}
+error_log /var/log/angie/error.log {{.Env.ANGIE_ERROR_LOG_SEVERITY}};
+{{- else }}
+error_log /dev/stderr {{.Env.ANGIE_ERROR_LOG_SEVERITY}};
+{{- end }}
+pid {{.Env.ANGIE_PID_FILE}};
+
+events {
+    worker_connections {{.Env.ANGIE_WORKER_CONNECTIONS}};
+}
+
+http {
+    include /etc/angie/mime.types;
+    default_type application/octet-stream;
+
+    log_format  main  '$remote_addr - $remote_user [$time_local] "$request" '
+                      '$status $body_bytes_sent "$http_referer" '
+                      '"$http_user_agent" "$http_x_forwarded_for"';
+
+    log_format extended '$remote_addr - $remote_user [$time_local] "$request" '
+                        '$status $body_bytes_sent "$http_referer" rt="$request_time" '
+                        '"$http_user_agent" "$http_x_forwarded_for" '
+                        'h="$host" sn="$server_name" ru="$request_uri" u="$uri" '
+                        'ucs="$upstream_cache_status" ua="$upstream_addr" us="$upstream_status" '
+                        'uct="$upstream_connect_time" urt="$upstream_response_time"';
+
+    #access_log /dev/stdout  main;
+    access_log /var/log/angie/access.log  main;
+
+    sendfile    on;
+    #tcp_nopush on;
+
+    keepalive_timeout 65;
+
+    #gzip on;
+
+    include /etc/angie/http.d/*.conf;
+}
+
+#stream {
+#    include /etc/angie/stream.d/*.conf;
+#}

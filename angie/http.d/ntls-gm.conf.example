@@ -1,0 +1,43 @@
+# ==============================================================================
+# NTLS / 国密 443 参考配置（GB/T 38636 / GM/T 0024 TLCP，Tongsuo 8.4.0 + Angie ssl_ntls）
+#
+# 本文件是【模板】，默认不加载（后缀 .example）。启用步骤：
+#   1. 准备国密双证书（签名 + 加密，缺一不可，TLCP 强制要求成对）：
+#        /etc/angie/certs/sm2/server_sign.crt   签名证书（含链）
+#        /etc/angie/certs/sm2/server_sign.key
+#        /etc/angie/certs/sm2/server_enc.crt    加密证书（含链）
+#        /etc/angie/certs/sm2/server_enc.key
+#   2. 去掉文件后缀或复制为 .conf 并放入 /etc/angie/http.d/
+#   3. 按实际网段修改 listen 端口与 server_name，然后 reload
+# ==============================================================================
+
+server {
+    listen 443 ssl default_server;
+    server_name gm.example.com;
+
+    ssl_ntls on;
+
+    # TLCP 双证书：sign=签名证书、enc=加密证书（顺序无关，前缀决定角色）
+    ssl_certificate sign:/etc/angie/certs/sm2/server_sign.crt
+                    enc:/etc/angie/certs/sm2/server_enc.crt;
+    ssl_certificate_key sign:/etc/angie/certs/sm2/server_sign.key
+                        enc:/etc/angie/certs/sm2/server_enc.key;
+
+    # 仅允许 TLCP 套件（NTLSv1.1）
+    #   ECDHE-SM2-SM4-GCM-SM3  ECC-SM2-SM4-GCM-SM3
+    #   ECDHE-SM2-SM4-CBC-SM3  ECC-SM2-SM4-CBC-SM3
+    # 若还需接受 RSA 签名 TLCP 套件，可追加 RSA-SM4-GCM-SM3 / RSA-SM4-CBC-SM3 等
+    ssl_ciphers "ECDHE-SM2-SM4-GCM-SM3:ECC-SM2-SM4-GCM-SM3:ECDHE-SM2-SM4-CBC-SM3:ECC-SM2-SM4-CBC-SM3";
+    ssl_prefer_server_ciphers on;
+
+    # 标准 TLS 协议（不影响 NTLSv1.1 协商；NTLS 走独立状态机）
+    ssl_protocols TLSv1.2 TLSv1.3;
+
+    # 安全加固
+    add_header Strict-Transport-Security "max-age=31536000" always;
+
+    location / {
+        root  /usr/share/angie/html;
+        index index.html index.htm;
+    }
+}

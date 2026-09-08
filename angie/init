@@ -1,0 +1,77 @@
+#!/usr/bin/env bash
+
+set -eu
+
+config() {
+	log "prepare configs"
+	[ "$ANGIE_WORKER_PROCESSES" = "cpus" ] && export ANGIE_WORKER_PROCESSES=$(cpus)
+	gomplate --input-dir "$ANGIE_CONFIG_TEMPLATES" --output-dir /etc/angie
+}
+
+cpus() {
+	local cpus quota period
+
+	if [ -r /sys/fs/cgroup/cpu.max ]; then
+		read quota period < /sys/fs/cgroup/cpu.max
+	elif [ -r /sys/fs/cgroup/cpu/cpu.cfs_quota_us ] && [ -r /sys/fs/cgroup/cpu/cpu.cfs_period_us ]; then
+		read quota  < /sys/fs/cgroup/cpu/cpu.cfs_quota_us
+		read period < /sys/fs/cgroup/cpu/cpu.cfs_period_us
+	fi
+
+	if [[ "$quota" =~ ^[0-9]+$ ]] && [[ "$quota" =~ ^[0-9]+$ ]]; then
+		cpus=$(printf "%.0f" $((10 * quota / period))e-1)
+		[ $cpus -lt 1 ] && cpus=1
+		echo $cpus
+	else
+		echo "auto"
+	fi
+}
+
+log() {
+	echo "$(basename $0): $@" >&2
+}
+
+main() {
+	[ $# -eq 0 ] && set -- "${ANGIE_BINARY}" "-g" "daemon off;"
+
+	[ "$ANGIE_FEATURE_TEMPLATE" = on ] && config
+	[ "$ANGIE_FEATURE_RELOAD" = on ] || exec "$@"
+
+	local pid rc
+
+	trap 'log "got SIGHUP"; reload' SIGHUP
+	trap 'log "got SIGQUIT"; quit'  SIGQUIT
+	trap 'log "got SIGTERM"; stop'  SIGTERM
+
+	"$@" &
+	log "started '$@' pid:$!"
+
+	while : ; do
+		wait -n -p pid && rc=0 || rc=$?
+
+		if [ -n "${pid:-}" ]; then
+			log "process pid:$pid exited rc:$rc"
+			exit $rc
+		fi
+	done
+}
+
+quit() {
+	angie -s quit; wait
+	log "exit"
+	exit 0
+}
+
+reload() {
+	[ "$ANGIE_FEATURE_TEMPLATE" = on ] && config
+	angie -s reload
+	log "angie reloaded"
+}
+
+stop() {
+	angie -s stop; wait
+	log "exit"
+	exit 0
+}
+
+main "$@"
