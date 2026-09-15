@@ -1,0 +1,12 @@
+{
+    "mcpServers": {
+        "codegraph": {
+            "command": "codegraph",
+            "args": ["serve", "--mcp"]
+        },
+        "aoci": {
+            "command": "aoci",
+            "args": ["mcp"]
+        }
+    }
+}

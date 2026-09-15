@@ -1,0 +1,16 @@
+{
+    "providers": {
+        "custom": {
+	    "baseUrl": "http://127.0.0.1:3333",
+	    "api": "openai-completions",
+	    "apikey": "sk-xxxx",
+	    "models": [
+	        {
+		    "id": "Qwen3.8-27B-FP8",
+		    "name": "Qwen3.8-27B-FP8",
+		    "contextWindow": 262144
+		}
+	    ]
+	}
+    }
+}

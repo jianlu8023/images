@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# codegraph MCP 自动初始化 wrapper：
+# `serve --mcp` 时若所在项目还没有 .codegraph/ 索引，先自动跑一次 codegraph init，
+# 保证 MCP 连上即可用。会往项目里写 .codegraph/（不碰 .gitignore，会显示为未跟踪）；
+# 大仓库首次连接会阻塞数秒到数十秒，仅每个项目一次。
+set -u
+REAL=/usr/local/bin/.codegraph-real
+
+if [[ "${1:-}" == "serve" && "${2:-}" == "--mcp" ]]; then
+  root="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+  if [[ ! -d "$root/.codegraph" ]]; then
+    "$REAL" init "$root" >/dev/null 2>&1 || true
+  fi
+fi
+
+exec "$REAL" "$@"

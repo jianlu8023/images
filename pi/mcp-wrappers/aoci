@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+# aoci MCP 自动初始化 wrapper：
+# `mcp` 启动时若仓库还没有 .aoci/config.json，先自动跑一次 aoci init（zh-CN），
+# 保证 MCP 连上即可用（索引内容由 agent 会话里按治理流程继续构建，无需 scan）。
+# 会往项目里写 .aoci/、aoci*.txt、.gitattributes，并在 AGENTS.md 追加 aoci 管理块。
+# 非 git 目录回退到 --here 就地初始化，失败也不阻塞 MCP 启动。
+set -u
+REAL=/usr/local/bin/.aoci-real
+
+if [[ "${1:-}" == "mcp" ]]; then
+  root="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+  if [[ -n "$root" ]]; then
+    [[ -f "$root/.aoci/config.json" ]] \
+      || "$REAL" --repo "$root" init --locale zh-CN --quiet >/dev/null 2>&1 || true
+  else
+    [[ -f ".aoci/config.json" ]] \
+      || "$REAL" init --here --locale zh-CN --quiet >/dev/null 2>&1 || true
+  fi
+fi
+
+exec "$REAL" "$@"
