@@ -4,9 +4,8 @@
 
 | Dockerfile | SSL 库 | 国密 NTLS | HTTP/3 | 说明 |
 |---|---|---|---|---|
-| `Dockerfile` | 铜锁 8.4.0 (OpenSSL 3.0.3) | 支持 | 有，但**无 0-RTT** | 国密主力镜像 |
-| `Dockerfile-template` | 铜锁 8.4.0 (OpenSSL 3.0.3) | 支持 | 有，但**无 0-RTT** | 同上 + gomplate 模板渲染 |
-| `Dockerfile-h3` | OpenSSL 3.5.7 | **不支持** | 完整（含 0-RTT） | 高性能 HTTP/3 镜像 |
+| `Dockerfile` | 铜锁 8.5.0-pre2 (OpenSSL 3.5) | 支持 | 完整（含 0-RTT） | 国密主力镜像 |
+| `Dockerfile-template` | 铜锁 8.5.0-pre2 (OpenSSL 3.5) | 支持 | 完整（含 0-RTT） | 同上 + gomplate 模板渲染 |
 
 
 ## 快速开始
@@ -25,12 +24,6 @@ docker buildx build -t angie:ntls-alpine -f Dockerfile .
 docker buildx build -t angie:ntls-template-alpine -f Dockerfile-template .
 ```
 
-* 构建 HTTP/3 镜像
-
-```shell
-docker buildx build -t angie:h3-alpine -f Dockerfile-h3 .
-```
-
 2. 运行容器
 
 ```shell
@@ -39,23 +32,23 @@ docker run --rm --name angie-ntls --ulimit nofile=65536:65536 \
   angie:ntls-alpine
 ```
 
-* 运行 HTTP/3 镜像（HTTP/3 走 UDP，**必须**放通 443/udp）
+* 运行 HTTP/3（HTTP/3 走 UDP，**必须**放通 443/udp；铜锁 8.5.0 原生支持 QUIC，主镜像即可）
 
 ```shell
 docker run --rm --name angie-h3 \
   -p 80:80 -p 443:443 -p 443:443/udp \
-  angie:h3-alpine
+  angie:ntls-alpine
 ```
 
 3. 验证NTLS支持
 
 ```text
 angie -V
-Angie version: Angie/1.12.1
+Angie version: Angie/1.12.2
 nginx version: nginx/1.31.2
 built on Fri, 28 Aug 2026 05:26:45 GMT
 built by gcc 14.2.0 (Alpine 14.2.0)
-built with OpenSSL 3.0.3 3 May 2022
+built with OpenSSL 3.5 3 Aug 2026
 TLS SNI support enabled
 configure arguments: --prefix=/etc/angie --conf-path=/etc/angie/angie.conf --error-log-path=/var/log/angie/error.log 
 --http-log-path=/var/log/angie/access.log --lock-path=/run/angie.lock --modules-path=/usr/lib/angie/modules 
@@ -70,7 +63,7 @@ configure arguments: --prefix=/etc/angie --conf-path=/etc/angie/angie.conf --err
 --with-mail_ssl_module --with-stream --with-stream_acme_module --with-stream_mqtt_preread_module 
 --with-stream_rdp_preread_module --with-stream_realip_module --with-stream_ssl_module --with-stream_ssl_preread_module 
 --with-threads --with-ld-opt='-Wl,--as-needed,-O1,--sort-common -Wl,-z,pack-relative-relocs' 
---with-openssl=../tongsuo-8.4.0 --with-openssl-opt=enable-ntls --with-ntls --add-dynamic-module=../ngx_brotli 
+--with-openssl=../tongsuo-8.5.0-pre2 --with-openssl-opt=enable-ntls --with-ntls --add-dynamic-module=../ngx_brotli 
 --add-dynamic-module=../headers-more-nginx-module --add-dynamic-module=../echo-nginx-module 
 --add-dynamic-module=../ngx_http_substitutions_filter_module --add-dynamic-module=../ngx_cache_purge 
 --add-dynamic-module=../nginx-dav-ext-module --add-dynamic-module=../ngx_devel_kit 
@@ -115,7 +108,7 @@ server {
 
 ## HTTP/3 配置参考
 
-`Dockerfile-h3` 构建出的镜像支持完整 HTTP/3（含 0-RTT）。监听配置：
+铜锁 8.5.0 基于 OpenSSL 3.5，内置 QUIC（RFC9000）与 0-RTT，两个镜像都完整支持 HTTP/3（含 0-RTT）。监听配置：
 
 ```nginx
 server {
