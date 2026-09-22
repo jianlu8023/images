@@ -1,0 +1,10 @@
+{
+	servers {
+		protocols h1 h2 h3
+	}
+}
+:8443 {
+	tls /srv/cert/cert.pem /srv/cert/key.pem
+	root * /srv/www
+	file_server
+}

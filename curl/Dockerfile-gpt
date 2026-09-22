@@ -1,0 +1,111 @@
+# syntax=docker/dockerfile:1
+
+ARG ALPINE_VERSION=3.23
+ARG CURL_VERSION=curl-8_22_0
+ARG NGTCP2_VERSION=v1.25.0
+ARG NGHTTP3_VERSION=v1.18.0
+ARG WOLFSSL_VERSION=v5.9.2-stable
+
+FROM alpine:${ALPINE_VERSION} AS build
+
+ARG CURL_VERSION
+ARG NGTCP2_VERSION
+ARG NGHTTP3_VERSION
+ARG WOLFSSL_VERSION
+
+ENV PREFIX=/opt/quic \
+    PKG_CONFIG_PATH=/opt/quic/lib/pkgconfig \
+    LD_LIBRARY_PATH=/opt/quic/lib
+
+RUN apk add --no-cache \
+      build-base \
+      autoconf \
+      automake \
+      libtool \
+      pkgconf \
+      git \
+      ca-certificates \
+      linux-headers \
+      perl
+
+WORKDIR /src
+
+# wolfSSL：TLS 1.3 + QUIC API
+RUN git clone --depth 1 --branch "${WOLFSSL_VERSION}" \
+      https://github.com/wolfSSL/wolfssl.git && \
+    cd wolfssl && \
+    autoreconf -fi && \
+    ./configure \
+      --prefix="${PREFIX}" \
+      --enable-quic \
+      --enable-session-ticket \
+      --enable-earlydata \
+      --enable-psk \
+      --enable-harden \
+      --enable-altcertchains && \
+    make -j"$(getconf _NPROCESSORS_ONLN)" && \
+    make install
+
+# nghttp3：HTTP/3 + QPACK
+RUN git clone --depth 1 --branch "${NGHTTP3_VERSION}" --recursive \
+      https://github.com/ngtcp2/nghttp3.git && \
+    cd nghttp3 && \
+    autoreconf -fi && \
+    ./configure \
+      --prefix="${PREFIX}" \
+      --enable-lib-only && \
+    make -j"$(getconf _NPROCESSORS_ONLN)" && \
+    make install
+
+# ngtcp2：QUIC transport
+RUN git clone --depth 1 --branch "${NGTCP2_VERSION}" --recursive \
+      https://github.com/ngtcp2/ngtcp2.git && \
+    cd ngtcp2 && \
+    autoreconf -fi && \
+    PKG_CONFIG_PATH="${PREFIX}/lib/pkgconfig" \
+    LDFLAGS="-Wl,-rpath,${PREFIX}/lib" \
+    ./configure \
+      --prefix="${PREFIX}" \
+      --enable-lib-only \
+      --with-wolfssl && \
+    make -j"$(getconf _NPROCESSORS_ONLN)" && \
+    make install
+
+# curl：启用 HTTP/3
+RUN git clone --depth 1 --branch "${CURL_VERSION}" \
+      https://github.com/curl/curl.git && \
+    cd curl && \
+    autoreconf -fi && \
+    PKG_CONFIG_PATH="${PREFIX}/lib/pkgconfig" \
+    CPPFLAGS="-I${PREFIX}/include" \
+    LDFLAGS="-L${PREFIX}/lib -Wl,-rpath,${PREFIX}/lib" \
+    ./configure \
+      --prefix="${PREFIX}" \
+      --with-wolfssl="${PREFIX}" \
+      --with-ngtcp2="${PREFIX}" \
+      --with-nghttp3="${PREFIX}" \
+      --with-ca-bundle=/etc/ssl/certs/ca-certificates.crt \
+      --disable-ldap \
+      --disable-ldaps \
+      --without-libpsl \
+      --without-zstd \
+      --without-brotli \
+      --without-libidn2 && \
+    make -j"$(getconf _NPROCESSORS_ONLN)" && \
+    make install && \
+    "${PREFIX}/bin/curl" -V | tee /tmp/curl-version.txt && \
+    grep -q 'HTTP3' /tmp/curl-version.txt
+
+FROM alpine:${ALPINE_VERSION} AS runtime
+
+RUN apk add --no-cache ca-certificates
+
+COPY --from=build /opt/quic /opt/quic
+
+ENV PATH=/opt/quic/bin:${PATH} \
+    LD_LIBRARY_PATH=/opt/quic/lib
+
+RUN curl -V && curl -V | grep -q 'HTTP3'
+
+ENTRYPOINT ["curl"]
+CMD ["--version"]

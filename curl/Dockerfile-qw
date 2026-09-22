@@ -1,0 +1,90 @@
+自己编译的 curl 功能比系统自带的少了很多（比如缺了 brotli、zstd、libssh、OpenLDAP 等），这是因为你在编译时为了省事，手动关闭了这些功能。
+
+要想让编译版和系统原版功能一致，核心思路就是：安装所有依赖的开发包，并在 ./configure 时把它们全部开启。
+
+以下是具体的修改方案：
+修改构建依赖
+你需要安装那些缺失功能对应的开发库（通常以 -dev 结尾）。
+
+在 Dockerfile 的 apk add 部分，增加以下依赖：
+brotli: brotli-dev
+zstd: zstd-dev
+libssh: libssh-dev
+libidn2: libidn2-dev
+libpsl: libpsl-dev
+zlib: zlib-dev (虽然你有了，但确保它存在)
+openldap: openldap-dev
+修改 curl 的编译配置
+你之前的配置里用了大量的 --without-xxx，这直接导致了功能缺失。你需要把它们改成 --with-xxx 并指向对应的路径。
+
+修改后的 Dockerfile 片段
+
+请参考以下修改后的关键部分（主要修改了 apk add 和 curl configure 部分）：
+
+... (前面的 OpenSSL, ngtcp2, nghttp3 构建部分保持不变) ...
+curl（HTTP/3 客户端，开启所有功能）
+注意：我们需要先安装所有依赖库，不仅仅是构建工具
+RUN apk add --no-cache --virtual .build-deps \
+        build-base autoconf automake libtool pkgconf bison gperf \
+        cmake ninja perl make ca-certificates \
+        zlib zlib-dev \
+        nghttp2 nghttp2-dev \
+        brotli brotli-dev \
+        zstd zstd-dev \
+        libssh-dev \
+        libidn2-dev \
+        libpsl-dev \
+        openldap-dev \
+        linux-headers
+
+构建 curl
+RUN cd ${CURL_SRCDIR} \
+    && PKG_CONFIG_PATH=${PREFIX}/lib/pkgconfig:/usr/lib/pkgconfig \
+    CPPFLAGS="-I${PREFIX}/include" \
+    LDFLAGS="-L${PREFIX}/lib -Wl,-rpath,${PREFIX}/lib" \
+    ./configure --prefix=${PREFIX} \
+        # --- TLS 和 HTTP/3 核心 ---
+        --with-openssl=${PREFIX} \
+        --with-ngtcp2=${PREFIX} \
+        --with-nghttp3=${PREFIX} \
+        # --- 开启原本缺失的功能 ---
+        --with-brotli \
+        --with-zstd \
+        --with-libssh \
+        --with-libidn2 \
+        --with-libpsl \
+        --with-ldap \
+        --with-ca-bundle=/etc/ssl/certs/ca-certificates.crt \
+        # --- 移除 --without-xxx 参数 ---
+    && make -j"$(nproc)" \
+    && make install \
+    && ${PREFIX}/bin/curl -V \
+    && ${PREFIX}/bin/curl -V | grep -q 'HTTP3' \
+    && cd / && rm -rf ${CURL_SRCDIR} curl-${CURL_VERSION}.tar.xz
+
+... (后面的 runtime 部分) ...
+修改运行环境
+因为你在编译时链接了 brotli, zstd, libssh 等库，运行镜像里也必须包含这些库，否则运行时会报错。
+
+修改 runtime 阶段的 apk add：
+
+FROM alpine:${ALPINE_VERSION} AS runtime
+
+添加 brotli-libs, libzstd, libssh, libidn2, libpsl, openldap-libs
+RUN apk add --no-cache ca-certificates libstdc++ \
+        openssl zlib nghttp2 \
+        brotli-libs libzstd libssh libidn2 libpsl openldap-libs
+
+COPY --from=build /opt/h3/bin /opt/h3/bin
+COPY --from=build /opt/h3/lib /opt/h3/lib
+
+ENV PATH=/opt/h3/bin:${PATH} \
+    LD_LIBRARY_PATH=/opt/h3/lib
+
+CMD ["curl", "--version"]
+
+总结
+构建阶段：安装 xxx-dev 包，并在 ./configure 时使用 --with-xxx 开启功能。
+运行阶段：安装 xxx-libs 包，确保动态链接库存在。
+
+这样构建出来的镜像，既支持 HTTP/3，又拥有和系统自带 curl 一样丰富的功能。

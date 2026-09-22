@@ -1,0 +1,169 @@
+# syntax=docker/dockerfile:1
+# ==============================================================================
+# curl HTTP/3 —— TLS 后端：wolfSSL 5.9.2（QUIC 扩展 --enable-quic）
+#
+# 统一版本（6 个 TLS 后端对比用，均取自 curl 8.22.0 官方 CI 同款组合）：
+#   curl 8.22.0 / ngtcp2 v1.25.0 / nghttp3 v1.18.0 / 运行时 alpine:3.22
+#   本变体额外：wolfSSL v5.9.2-stable
+#
+# 说明：
+# - wolfSSL 需要 --enable-quic --enable-earlydata --enable-psk 等开关才带 QUIC TLS API
+# - ngtcp2 的 wolfSSL 后端为 libngtcp2_crypto_wolfssl
+# - wolfSSL 无 release 附件，源码取自 GitHub tag 归档（v5.9.2-stable）
+# - 所有上游源码在构建时从官方源 wget 下载并做 sha256 校验，
+#   因此本目录**无需随附 src/ tarball**，任何人 clone 本仓库即可构建
+# - 全功能：与发行版默认 curl 对齐，启用全部标准功能 + HTTP/3：
+#   brotli / zstd / libssh(scp,sftp) / libidn2(IDN) / libpsl(PSL) /
+#   OpenLDAP(ldap,ldaps) / GSS-API+Kerberos+SPNEGO(krb5) / NTLM / SMB(smbs)
+#   （NTLM 的 DES 由 wolfSSL wolfcrypt 提供：--enable-des3 + -DWOLFSSL_DES_ECB
+#    开启 wc_Des_EcbEncrypt，curl 的 HAVE_WC_DES_ECBENCRYPT 检测依赖该符号）
+#
+# 构建：docker buildx build -f Dockerfile-wolfssl -t curl:8.22.0-h3-wolfssl .
+# ==============================================================================
+
+ARG ALPINE_VERSION=3.22
+
+FROM alpine:${ALPINE_VERSION} AS build
+
+ARG ALPINE_VERSION
+ARG CURL_VERSION=8.22.0
+ARG NGTCP2_VERSION=1.25.0
+ARG NGHTTP3_VERSION=1.18.0
+ARG WOLFSSL_VERSION=v5.9.2-stable
+ARG WOLFSSL_SHA256=2f4ef3d4fd387a9b3191d36a6316d69116c46ff69bb9583b6c82b36d7b8ca114
+
+ENV PREFIX=/opt/h3 \
+    WOLFSSL_SRCDIR=wolfssl-5.9.2-stable \
+    NGTCP2_SRCDIR=ngtcp2-${NGTCP2_VERSION} \
+    NGHTTP3_SRCDIR=nghttp3-${NGHTTP3_VERSION} \
+    CURL_SRCDIR=curl-${CURL_VERSION} \
+    LD_LIBRARY_PATH=/opt/h3/lib
+
+RUN apk add --no-cache --virtual .build-deps \
+        build-base autoconf automake libtool pkgconf bison gperf \
+        cmake ninja perl make ca-certificates \
+        zlib zlib-dev nghttp2 nghttp2-dev linux-headers \
+        brotli-dev zstd-dev libssh-dev libidn2-dev libpsl-dev \
+        openldap-dev krb5-dev
+
+# ------------------------------------------------------------------------------
+# 从官方源下载全部依赖源码（每次构建重新下载；sha256 校验失败即构建失败）
+# ------------------------------------------------------------------------------
+RUN cd / \
+    && set -eux \
+    && wget --tries=2 --timeout=30 -O curl-${CURL_VERSION}.tar.xz \
+        "https://github.com/curl/curl/releases/download/curl-8_22_0/curl-${CURL_VERSION}.tar.xz" \
+    && wget --tries=2 --timeout=30 -O nghttp3-${NGHTTP3_VERSION}.tar.gz \
+        "https://github.com/ngtcp2/nghttp3/releases/download/v${NGHTTP3_VERSION}/nghttp3-${NGHTTP3_VERSION}.tar.gz" \
+    && wget --tries=2 --timeout=30 -O ngtcp2-${NGTCP2_VERSION}.tar.gz \
+        "https://github.com/ngtcp2/ngtcp2/releases/download/v${NGTCP2_VERSION}/ngtcp2-${NGTCP2_VERSION}.tar.gz" \
+    && wget --tries=2 --timeout=30 -O wolfssl-5.9.2.tar.gz \
+        "https://github.com/wolfSSL/wolfssl/archive/refs/tags/${WOLFSSL_VERSION}.tar.gz" \
+    && echo "f7ef3ae8a22e521f289803fe93543eb64c329b58aa73a9e224dfd915a2a5f4f7  /curl-${CURL_VERSION}.tar.xz" \
+       | sha256sum -c - \
+    && echo "2812e9c06583fa24c8dc46bdb5291310a69196352ceaca8fbe98106ff36ae7d8  /nghttp3-${NGHTTP3_VERSION}.tar.gz" \
+       | sha256sum -c - \
+    && echo "1c0843076528a87b65e9a9d455100941f4cb65d44f96c5da6ae56df146043955  /ngtcp2-${NGTCP2_VERSION}.tar.gz" \
+       | sha256sum -c - \
+    && echo "${WOLFSSL_SHA256}  /wolfssl-5.9.2.tar.gz" \
+       | sha256sum -c - \
+    && tar -xJf /curl-${CURL_VERSION}.tar.xz -C /
+
+# 1. wolfSSL 5.9.2（TLS 1.3 + QUIC）
+RUN tar -xzf /wolfssl-5.9.2.tar.gz -C / \
+    && cd ${WOLFSSL_SRCDIR} \
+    && autoreconf -fi \
+    && CFLAGS="-DWOLFSSL_DES_ECB" ./configure --prefix=${PREFIX} \
+        --enable-quic --enable-opensslall --enable-aesecb --enable-des3 \
+        --enable-session-ticket --enable-earlydata \
+        --enable-psk --enable-harden --enable-altcertchains \
+    && make -j"$(nproc)" \
+    && make install \
+    && cd / && rm -rf ${WOLFSSL_SRCDIR} wolfssl-5.9.2.tar.gz
+
+# 2. nghttp3（HTTP/3 + QPACK）
+RUN tar -xzf /nghttp3-${NGHTTP3_VERSION}.tar.gz -C / \
+    && cd ${NGHTTP3_SRCDIR} \
+    && autoreconf -fi \
+    && ./configure --prefix=${PREFIX} --enable-lib-only \
+    && make -j"$(nproc)" \
+    && make install \
+    && cd / && rm -rf ${NGHTTP3_SRCDIR} nghttp3-${NGHTTP3_VERSION}.tar.gz
+
+# 3. ngtcp2（QUIC 传输层 + wolfSSL 加密后端 libngtcp2_crypto_wolfssl）
+RUN tar -xzf /ngtcp2-${NGTCP2_VERSION}.tar.gz -C / \
+    && cd ${NGTCP2_SRCDIR} \
+    && PKG_CONFIG_PATH=${PREFIX}/lib/pkgconfig \
+    LDFLAGS="-Wl,-rpath,${PREFIX}/lib" \
+    ./configure --prefix=${PREFIX} --enable-lib-only --with-wolfssl \
+    && make -j"$(nproc)" \
+    && make install \
+    && cd / && rm -rf ${NGTCP2_SRCDIR} ngtcp2-${NGTCP2_VERSION}.tar.gz
+
+# 4. curl（HTTP/3 客户端，共享 libcurl）
+RUN cd ${CURL_SRCDIR} \
+    && PKG_CONFIG_PATH=${PREFIX}/lib/pkgconfig:/usr/lib/pkgconfig \
+    CPPFLAGS="-I${PREFIX}/include" \
+    LDFLAGS="-L${PREFIX}/lib -Wl,-rpath,${PREFIX}/lib" \
+    ./configure --prefix=${PREFIX} \
+        --with-wolfssl=${PREFIX} \
+        --with-ngtcp2=${PREFIX} \
+        --with-nghttp3=${PREFIX} \
+        --with-ca-bundle=/etc/ssl/certs/ca-certificates.crt \
+        # --- 对齐默认 curl 的全部功能（均经 alpine 官方仓库 dev 包启用）---
+        --with-brotli \
+        --with-zstd \
+        --with-libssh \
+        --with-libidn2 \
+        --with-libpsl \
+        --with-gssapi \
+        --enable-ntlm \
+        --enable-smb \
+    && make -j"$(nproc)" \
+    && make install \
+    && ${PREFIX}/bin/curl -V \
+    && ${PREFIX}/bin/curl -V | grep -q 'HTTP3' \
+    && ${PREFIX}/bin/curl -V | grep -q 'HTTP2' \
+    && ${PREFIX}/bin/curl -V | grep -q 'brotli/' \
+    && ${PREFIX}/bin/curl -V | grep -q 'zstd/' \
+    && ${PREFIX}/bin/curl -V | grep -q 'libssh/' \
+    && ${PREFIX}/bin/curl -V | grep -q 'libidn2/' \
+    && ${PREFIX}/bin/curl -V | grep -q 'libpsl/' \
+    && ${PREFIX}/bin/curl -V | grep -q 'GSS-API' \
+    && ${PREFIX}/bin/curl -V | grep -q 'Kerberos' \
+    && ${PREFIX}/bin/curl -V | grep -q 'SPNEGO' \
+    && ${PREFIX}/bin/curl -V | grep -q 'NTLM' \
+    && ${PREFIX}/bin/curl -V | grep -q 'IDN' \
+    && ${PREFIX}/bin/curl -V | grep -q 'PSL' \
+    && ${PREFIX}/bin/curl -V | grep -q 'ldaps' \
+    && ${PREFIX}/bin/curl -V | grep -q 'smb' \
+    && cd / && rm -rf ${CURL_SRCDIR} curl-${CURL_VERSION}.tar.xz
+
+# ==============================================================================
+# 运行阶段：最小依赖 + /opt/h3（自编译的 curl 与全部动态库）
+# ==============================================================================
+FROM alpine:${ALPINE_VERSION} AS runtime
+
+ARG ALPINE_VERSION
+RUN apk add --no-cache ca-certificates libstdc++ zlib nghttp2 \
+        openssl brotli-libs zstd-libs libssh libidn2 libpsl libldap krb5-libs
+
+# 只拷运行所需（bin/lib），不含头文件与 man 页，保持镜像最小
+COPY --from=build /opt/h3/bin /opt/h3/bin
+COPY --from=build /opt/h3/lib /opt/h3/lib
+
+ENV PATH=/opt/h3/bin:${PATH} \
+    LD_LIBRARY_PATH=/opt/h3/lib
+
+RUN curl -V | grep -q 'HTTP3' \
+    && curl -V | grep -q 'brotli/' \
+    && curl -V | grep -q 'zstd/' \
+    && curl -V | grep -q 'libssh/' \
+    && curl -V | grep -q 'libidn2/' \
+    && curl -V | grep -q 'libpsl/' \
+    && curl -V | grep -q 'GSS-API' \
+    && curl -V | grep -q 'NTLM' \
+    && curl -V | grep -q 'smb' \
+    && [ -z "$(ldd /opt/h3/bin/curl 2>&1 | grep -i 'not found' || true)" ]
+
+CMD ["curl", "--version"]

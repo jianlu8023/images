@@ -1,0 +1,160 @@
+# syntax=docker/dockerfile:1
+# ==============================================================================
+# curl —— TLS 后端：Rustls（Rust 实现的 TLS，经 rustls-ffi C 绑定）
+#
+# 统一版本（与 5 个 HTTP/3 变体对齐，curl 同一版本）：
+#   curl 8.22.0 / 运行时 alpine:3.22
+#   本变体额外：rustls-ffi 0.15.3（rustls 0.23，默认 aws-lc-rs 加密 provider）
+#
+# 说明：
+# - 本变体【不含 HTTP/3】：curl 的 QUIC 路径（ngtcp2）要求 ngtcp2 的加密后端
+#   （OpenSSL/BoringSSL/GnuTLS/wolfSSL/picotls），ngtcp2 没有 rustls 后端；
+#   因此这是「默认 curl + Rustls TLS」变体，用于对比各 TLS 后端的非 H3 性能
+# - 全功能：与发行版默认 curl 对齐，启用全部标准功能：
+#   brotli / zstd / libssh(scp,sftp) / libidn2(IDN) / libpsl(PSL) /
+#   OpenLDAP(ldap,ldaps) / GSS-API+Kerberos+SPNEGO(krb5) / NTLM / SMB(smbs)
+#   （Rustls 无 DES，NTLM/SMB 由 curl 内置实现，不依赖 OpenSSL）
+# - 上游源码在构建时从官方源 wget 下载并做 sha256 校验，
+#   因此本目录**无需随附 src/ tarball**，任何人 clone 本仓库即可构建
+# - 构建阶段用官方 rust:alpine 镜像（与运行阶段同为 alpine/musl 环境）：
+#   工具链版本由镜像 tag 固定（1.98.1-alpine3.22，满足 rustls-ffi 要求的
+#   rust-version=1.85），只额外补装 cargo-c / cmake / perl；
+#   cargo 依赖走阿里云 crates 镜像
+# - aws-lc-rs 在 musl 下无预编译产物，由 cmake 源码编译（构建依赖 perl/cmake）
+#
+# 构建：docker buildx build -f Dockerfile-rustls -t curl:8.22.0-rustls .
+# 验证：./test-rustls.sh（起本地 caddy TLS 服务，curl https 实测 + Rustls 校验）
+# ==============================================================================
+
+ARG ALPINE_VERSION=3.22
+ARG RUST_IMAGE=rust:1.98.1-alpine3.22
+
+FROM ${RUST_IMAGE} AS build
+
+ARG ALPINE_VERSION
+
+ARG CURL_VERSION=8.22.0
+ARG CURL_SHA256=f7ef3ae8a22e521f289803fe93543eb64c329b58aa73a9e224dfd915a2a5f4f7
+ARG RUSTLS_FFI_VERSION=0.15.3
+ARG RUSTLS_FFI_SHA256=f1612b770be384ff23d5647c815ac3f47734e2ec3c4a03cabc453723461234bc
+
+ENV PREFIX=/opt/h3 \
+    CURL_SRCDIR=curl-${CURL_VERSION} \
+    RUSTLS_FFI_SRCDIR=rustls-ffi-${RUSTLS_FFI_VERSION} \
+    RUSTLS_PREFIX=/opt/h3 \
+    LD_LIBRARY_PATH=/opt/h3/lib
+
+# 构建工具（rust/cargo 已随 rust:alpine 提供，这里只补）：
+#   - cargo-c：cargo capi install（构建 rustls-ffi 的 C 绑定 + 生成 rustls.pc）
+#   - cmake/perl：aws-lc-rs（crypto provider）在 musl 下源码编译所需
+RUN apk add --no-cache --virtual .build-deps \
+        build-base autoconf automake libtool pkgconf bison gperf \
+        cmake ninja perl make ca-certificates \
+        cargo-c \
+        zlib zlib-dev nghttp2 nghttp2-dev linux-headers \
+        brotli-dev zstd-dev libssh-dev libidn2-dev libpsl-dev \
+        openldap-dev krb5-dev
+
+# cargo 走阿里云 crates 镜像（sparse index；crates 文件经镜像的 dl 端点下载）
+# （rust:alpine 的 CARGO_HOME=/usr/local/cargo，目录已存在）
+RUN printf '[source.crates-io]\nreplace-with = "aliyun"\n\n[source.aliyun]\nregistry = "sparse+https://mirrors.aliyun.com/crates.io-index/"\n' \
+        > "${CARGO_HOME}/config.toml" \
+    && cargo --version \
+    && rustc --version \
+    && cargo capi --version
+
+# ------------------------------------------------------------------------------
+# 从官方源下载依赖源码（每次构建重新下载；sha256 校验失败即构建失败）
+# ------------------------------------------------------------------------------
+RUN cd / \
+    && set -eux \
+    && wget --tries=2 --timeout=30 -O curl-${CURL_VERSION}.tar.xz \
+        "https://github.com/curl/curl/releases/download/curl-8_22_0/curl-${CURL_VERSION}.tar.xz" \
+    && wget --tries=2 --timeout=30 -O rustls-ffi-${RUSTLS_FFI_VERSION}.tar.gz \
+        "https://github.com/rustls/rustls-ffi/archive/refs/tags/v${RUSTLS_FFI_VERSION}.tar.gz" \
+    && echo "${CURL_SHA256}  /curl-${CURL_VERSION}.tar.xz" \
+       | sha256sum -c - \
+    && echo "${RUSTLS_FFI_SHA256}  /rustls-ffi-${RUSTLS_FFI_VERSION}.tar.gz" \
+       | sha256sum -c - \
+    && tar -xJf /curl-${CURL_VERSION}.tar.xz -C / \
+    && tar -xzf /rustls-ffi-${RUSTLS_FFI_VERSION}.tar.gz -C / \
+    && cd / && rm -f /curl-${CURL_VERSION}.tar.xz /rustls-ffi-${RUSTLS_FFI_VERSION}.tar.gz
+
+# 1. rustls-ffi（Rust 编译 librustls.so + 头文件 + rustls.pc）
+#    默认 crypto provider = aws-lc-rs（musl 下源码编译，依赖 cmake/perl）
+#    mkdir -p：cargo-c 0.10 不会自动创建不存在的 prefix 目录
+RUN mkdir -p ${RUSTLS_PREFIX} \
+    && cd ${RUSTLS_FFI_SRCDIR} \
+    && cargo capi install --release --prefix=${RUSTLS_PREFIX} \
+    && ls -l ${RUSTLS_PREFIX}/lib ${RUSTLS_PREFIX}/lib/pkgconfig ${RUSTLS_PREFIX}/include \
+    && cd / && rm -rf ${RUSTLS_FFI_SRCDIR}
+
+# 2. curl（TLS 后端 = Rustls；不启用 ngtcp2/nghttp3 → 无 HTTP/3）
+RUN cd ${CURL_SRCDIR} \
+    && PKG_CONFIG_PATH=${RUSTLS_PREFIX}/lib/pkgconfig:/usr/lib/pkgconfig \
+    CPPFLAGS="-I${RUSTLS_PREFIX}/include" \
+    LDFLAGS="-L${RUSTLS_PREFIX}/lib -Wl,-rpath,${RUSTLS_PREFIX}/lib" \
+    ./configure --prefix=${PREFIX} \
+        --with-rustls=${RUSTLS_PREFIX} \
+        --with-ca-bundle=/etc/ssl/certs/ca-certificates.crt \
+        # --- 对齐默认 curl 的全部功能（均经 alpine 官方仓库 dev 包启用）---
+        --with-brotli \
+        --with-zstd \
+        --with-libssh \
+        --with-libidn2 \
+        --with-libpsl \
+        --with-gssapi \
+        --enable-ntlm \
+        --enable-smb \
+    && make -j"$(nproc)" \
+    && make install \
+    && ${PREFIX}/bin/curl -V \
+    && ${PREFIX}/bin/curl -V | grep -q 'Rustls' \
+    && ! ${PREFIX}/bin/curl -V | grep -q 'HTTP3' \
+    && ${PREFIX}/bin/curl -V | grep -q 'HTTP2' \
+    && ${PREFIX}/bin/curl -V | grep -q 'brotli/' \
+    && ${PREFIX}/bin/curl -V | grep -q 'zstd/' \
+    && ${PREFIX}/bin/curl -V | grep -q 'libssh/' \
+    && ${PREFIX}/bin/curl -V | grep -q 'libidn2/' \
+    && ${PREFIX}/bin/curl -V | grep -q 'libpsl/' \
+    && ${PREFIX}/bin/curl -V | grep -q 'GSS-API' \
+    && ${PREFIX}/bin/curl -V | grep -q 'Kerberos' \
+    && ${PREFIX}/bin/curl -V | grep -q 'SPNEGO' \
+    && ${PREFIX}/bin/curl -V | grep -q 'NTLM' \
+    && ${PREFIX}/bin/curl -V | grep -q 'IDN' \
+    && ${PREFIX}/bin/curl -V | grep -q 'PSL' \
+    && ${PREFIX}/bin/curl -V | grep -q 'ldaps' \
+    && ${PREFIX}/bin/curl -V | grep -q 'smb' \
+    && cd / && rm -rf ${CURL_SRCDIR} curl-${CURL_VERSION}.tar.xz
+
+# ==============================================================================
+# 运行阶段：最小依赖 + /opt/h3（自编译的 curl、rustls 动态库与全部依赖库）
+# ==============================================================================
+FROM alpine:${ALPINE_VERSION} AS runtime
+
+ARG ALPINE_VERSION
+RUN apk add --no-cache ca-certificates libstdc++ \
+        openssl zlib nghttp2 \
+        brotli-libs zstd-libs libssh libidn2 libpsl libldap krb5-libs
+
+# 只拷运行所需（bin/lib），不含头文件与 man 页，保持镜像最小
+# （librustls.so + aws-lc-rs 的 .so 都在 /opt/h3/lib，rpath 已指向该目录）
+COPY --from=build /opt/h3/bin /opt/h3/bin
+COPY --from=build /opt/h3/lib /opt/h3/lib
+
+ENV PATH=/opt/h3/bin:${PATH} \
+    LD_LIBRARY_PATH=/opt/h3/lib
+
+RUN curl -V | grep -q 'Rustls' \
+    && ! curl -V | grep -q 'HTTP3' \
+    && curl -V | grep -q 'brotli/' \
+    && curl -V | grep -q 'zstd/' \
+    && curl -V | grep -q 'libssh/' \
+    && curl -V | grep -q 'libidn2/' \
+    && curl -V | grep -q 'libpsl/' \
+    && curl -V | grep -q 'GSS-API' \
+    && curl -V | grep -q 'NTLM' \
+    && curl -V | grep -q 'smb' \
+    && [ -z "$(ldd /opt/h3/bin/curl 2>&1 | grep -i 'not found' || true)" ]
+
+CMD ["curl", "--version"]
