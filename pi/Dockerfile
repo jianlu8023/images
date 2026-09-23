@@ -1,8 +1,8 @@
 FROM node:24-bookworm-slim AS product
 
-ARG PI_AGENT_VERSION=v0.87.0
+ARG PI_AGENT_VERSION=v0.87.1
 ARG CODEGRAPH_VERSION=1.6.0
-ARG AOCI_VERSION=v0.1.0-rc12
+ARG AOCI_VERSION=v0.1.0-rc14
 ARG UA_VERSION=v2.9.0
 
 # fd ubuntu/debian apt install fd-find ripgrep && ln -s "$(command -v fdfind) /usr/local/bin/fd)"
@@ -97,7 +97,9 @@ WORKDIR /workspace
 #   @narumitw/pi-plan-mode /plan-mode 只读规划模式
 #   @narumitw/pi-goal      /goal 自主完成单一目标
 #   @quintinshaw/pi-dynamic-workflows 动态工作流
-#   @wechatbot/pi-agent    /wechat 微信接入（扫码后微信里对话）
+#   @wechatbot/pi-agent    /wechat 微信接入（扫码后微信里对话）—— 暂时不安装
+#   @juicesharp/rpiv-ask-user-question  ask_user_question 终端结构化提问对话框（替代模型瞎猜）
+#   @dietrichgebert/ponytail     极简主义编码规则集 + /ponytail* 系列技能
 # MCP server（pi-mcp-adapter 读 ~/.pi/agent/mcp.json 全局接入，项目 .mcp.json 可覆盖）：
 #   codegraph              本地代码知识图谱，stdio：codegraph serve --mcp（wrapper 自动 init，见 mcp-wrappers/）
 #   aoci                   仓库认知索引，stdio：aoci mcp（wrapper 自动 init，见 mcp-wrappers/）
@@ -112,7 +114,8 @@ RUN --mount=type=cache,target=/root/.npm \
   && pi install --no-approve npm:@narumitw/pi-plan-mode \
   && pi install --no-approve npm:@narumitw/pi-goal \
   && pi install --no-approve npm:@quintinshaw/pi-dynamic-workflows \
-  && pi install --no-approve npm:@wechatbot/pi-agent \
+  && pi install --no-approve npm:@juicesharp/rpiv-ask-user-question \
+  && pi install --no-approve npm:@dietrichgebert/ponytail \
   && find /root/.pi/agent/npm -regextype posix-extended -type d \
        \( -regex '.*/node_modules/@esbuild/[^/]+' \
           ! -name esbuild \
