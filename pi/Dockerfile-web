@@ -4,6 +4,8 @@ ARG PI_WEB_VERSION=0.9.1
 ARG CODEGRAPH_VERSION=1.6.0
 ARG AOCI_VERSION=v0.1.0-rc14
 ARG UA_VERSION=v2.9.0
+ARG MCP_FS_VERSION=2026.8.31
+ARG CONTEXT7_VERSION=4.1.1
 
 # pi-web 默认打开系统浏览器，容器里没有浏览器，必须禁用
 ENV PI_WEB_NO_OPEN=1
@@ -84,6 +86,16 @@ RUN git clone --depth 1 --branch $UA_VERSION \
      done \
   && ln -sfn /root/.understand-anything/repo/understand-anything-plugin /root/.understand-anything-plugin
 
+# mcp-server-filesystem（官方文件系统 MCP，stdio：mcp-server-filesystem <目录>）：
+#   目录传 /workspace（容器 WORKDIR），允许读写的工作区即挂载点
+# context7（Upstash 文档上下文 MCP，stdio：context7-mcp，运行时需联网）：
+#   纯 JS 包，无原生依赖
+RUN --mount=type=cache,target=/root/.npm \
+  npm install -g --ignore-scripts \
+    @modelcontextprotocol/server-filesystem@$MCP_FS_VERSION \
+    @upstash/context7-mcp@$CONTEXT7_VERSION \
+  && command -v mcp-server-filesystem && context7-mcp --version
+
 # MCP 自动初始化 wrapper：项目没建索引时，MCP 首次连接前自动跑一次 init，
 # 保证连上即可用（真身分别挪到 .codegraph-real / .aoci-real）
 COPY mcp-wrappers/ /tmp/mcp-wrappers/
@@ -94,7 +106,10 @@ RUN mv /usr/local/bin/codegraph /usr/local/bin/.codegraph-real \
   && rm -rf /tmp/mcp-wrappers
 
 # 先拷配置，pi install 会把包列表写进 settings.json
-COPY models.json settings.json mcp.json AGENTS.md /root/.pi/agent/
+COPY models.json settings.json AGENTS.md /root/.pi/agent/
+# MCP 配置放标准全局位置（pi-mcp-adapter 原生读取，与 Claude Code/Cursor 等共享；
+# 不要再放 ~/.pi/agent/mcp.json，新版 adapter 会报迁移警告）
+COPY mcp.json /root/.config/mcp/mcp.json
 COPY skills/ /root/.pi/agent/skills/
 
 WORKDIR /workspace
@@ -110,9 +125,11 @@ WORKDIR /workspace
 #   @wechatbot/pi-agent    /wechat 微信接入（扫码后微信里对话）—— 暂时不安装
 #   @juicesharp/rpiv-ask-user-question  ask_user_question 结构化提问对话框—— 暂时不安装（web 会话无 TTY，对话框会降级）
 #   @dietrichgebert/ponytail     极简主义编码规则集 + /ponytail* 系列技能
-# MCP server（pi-mcp-adapter 读 ~/.pi/agent/mcp.json 全局接入，项目 .mcp.json 可覆盖）：
+# MCP server（pi-mcp-adapter 读 ~/.config/mcp/mcp.json 全局接入，项目 .mcp.json 可覆盖）：
 #   codegraph              本地代码知识图谱，stdio：codegraph serve --mcp（wrapper 自动 init，见 mcp-wrappers/）
 #   aoci                   仓库认知索引，stdio：aoci mcp（wrapper 自动 init，见 mcp-wrappers/）
+#   mcp-server-filesystem  文件系统读写，stdio：mcp-server-filesystem /workspace（工作区即挂载点）
+#   context7               Upstash 文档上下文，stdio：context7-mcp（需联网）
 # 技能包：
 #   understand-anything    /understand 系列技能（知识图谱生成/问答/看板），装在 ~/.agents/skills/
 # pi 命令已软链到 pi-web 的嵌套副本（Node 默认解析符号链接真实路径，模块查找不受影响），
