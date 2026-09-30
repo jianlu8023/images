@@ -115,6 +115,13 @@ WORKDIR /workspace
 #   @wechatbot/pi-agent    /wechat 微信接入（扫码后微信里对话）—— 暂时不安装
 #   @juicesharp/rpiv-ask-user-question  ask_user_question 终端结构化提问对话框（替代模型瞎猜）
 #   @dietrichgebert/ponytail     极简主义编码规则集 + /ponytail* 系列技能
+#   pi-memory              跨会话记忆：MEMORY.md 长期记忆 / daily 日志 / scratchpad，
+#                          纯 markdown 存于 ~/.pi/agent/memory/ —— 暂时不安装：
+#                          ① 记忆是全局的、不按项目隔离，一个容器跑多个仓库会串味
+#                          ② ~/.pi/agent 未挂卷，容器重建记忆即丢
+#                          需要时在下方 RUN 追加一行：pi install --no-approve npm:pi-memory
+#                          （核心 6 个工具零配置即装即用；语义搜索需另装 npm i -g @tobilu/qmd，
+#                           首次运行要联网下载 embedding 模型，且记忆目录建议挂卷持久化）
 # MCP server（pi-mcp-adapter 读 ~/.config/mcp/mcp.json 全局接入，项目 .mcp.json 可覆盖）：
 #   codegraph              本地代码知识图谱，stdio：codegraph serve --mcp（wrapper 自动 init，见 mcp-wrappers/）
 #   aoci                   仓库认知索引，stdio：aoci mcp（wrapper 自动 init，见 mcp-wrappers/）
@@ -140,6 +147,10 @@ RUN --mount=type=cache,target=/root/.npm \
           -o -path '*fs-native-extensions/prebuilds/*' ! -name 'linux-*' \
        \) -prune -exec rm -rf '{}' +
 
+
+# 进程标记（AI_AGENT=pi / PI_CODING_AGENT=true）不设 ENV：
+#   pi CLI 启动时自己设置这两个标记，子进程（bash 工具、MCP server 等）自动继承；
+#   设成容器级 ENV 会把容器内所有进程都误标为"运行在 pi 中"，故刻意不设
 
 STOPSIGNAL SIGTERM
 
