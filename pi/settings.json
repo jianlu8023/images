@@ -1,5 +1,8 @@
 {
   "theme": "dark",
+  "extensions": [
+    "-builtin:mcp"
+  ],
   "compaction": {
     "enabled": true,
     "reserveTokens": 62000,

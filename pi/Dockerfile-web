@@ -1,6 +1,6 @@
 FROM node:24-bookworm-slim
 
-ARG PI_WEB_VERSION=0.9.1
+ARG PI_WEB_VERSION=0.11.0
 ARG CODEGRAPH_VERSION=1.6.0
 ARG AOCI_VERSION=v0.1.0-rc14
 ARG UA_VERSION=v2.9.0
@@ -125,13 +125,13 @@ WORKDIR /workspace
 #   @wechatbot/pi-agent    /wechat 微信接入（扫码后微信里对话）—— 暂时不安装
 #   @juicesharp/rpiv-ask-user-question  ask_user_question 结构化提问对话框—— 暂时不安装（web 会话无 TTY，对话框会降级）
 #   @dietrichgebert/ponytail     极简主义编码规则集 + /ponytail* 系列技能
+#   pi-lens                实时代码反馈：LSP/类型检查/linter/结构分析（LSP 需项目内有语言服务器）
+#   billion-context        上下文压缩插件：小窗口大压缩、长会话省 token
+#   pi-cache-optimizer     提高 prompt/KV 缓存命中率（稳定前缀 + footer 缓存统计）
 #   pi-memory              跨会话记忆：MEMORY.md 长期记忆 / daily 日志 / scratchpad，
-#                          纯 markdown 存于 ~/.pi/agent/memory/ —— 暂时不安装：
-#                          ① 记忆是全局的、不按项目隔离，一个容器跑多个仓库会串味
-#                          ② ~/.pi/agent 未挂卷，容器重建记忆即丢
-#                          需要时在下方 RUN 追加一行：pi install --no-approve npm:pi-memory
-#                          （核心 6 个工具零配置即装即用；语义搜索需另装 npm i -g @tobilu/qmd，
-#                           首次运行要联网下载 embedding 模型，且记忆目录建议挂卷持久化）
+#                          纯 markdown 存于 ~/.pi/agent/memory/
+#                          注意：记忆全局不隔离（一容器多仓库会串味）；~/.pi/agent 未挂卷则容器重建即丢
+#                          语义搜索由 qmd 提供（已构建期预装，见下方 RUN；首次使用初始化 embedding 索引需联网），默认仅核心 6 工具零配置可用
 # MCP server（pi-mcp-adapter 读 ~/.config/mcp/mcp.json 全局接入，项目 .mcp.json 可覆盖）：
 #   codegraph              本地代码知识图谱，stdio：codegraph serve --mcp（wrapper 自动 init，见 mcp-wrappers/）
 #   aoci                   仓库认知索引，stdio：aoci mcp（wrapper 自动 init，见 mcp-wrappers/）
@@ -150,12 +150,21 @@ RUN --mount=type=cache,target=/root/.npm \
   && pi install --no-approve npm:@narumitw/pi-goal \
   && pi install --no-approve npm:@quintinshaw/pi-dynamic-workflows \
   && pi install --no-approve npm:@dietrichgebert/ponytail \
+  && pi install --no-approve npm:pi-lens \
+  && pi install --no-approve npm:billion-context \
+  && pi install --no-approve npm:pi-cache-optimizer \
+  && pi install --no-approve npm:pi-memory \
   && find /root/.pi/agent/npm -regextype posix-extended -type d \
        \( -regex '.*/node_modules/@esbuild/[^/]+' \
           ! -name esbuild \
           ! -name "linux-$(dpkg --print-architecture | sed -e 's/^amd64$/x64/' -e 's/^aarch64$/arm64/')" \
           -o -path '*fs-native-extensions/prebuilds/*' ! -name 'linux-*' \
        \) -prune -exec rm -rf '{}' +
+
+# qmd：pi-memory 语义搜索的 embedding 检索引擎（构建期固化，运行时无需联网装包）
+RUN --mount=type=cache,target=/root/.npm \
+  npm i -g @tobilu/qmd \
+  && qmd --version
 
 # 进程标记（AI_AGENT=pi / PI_CODING_AGENT=true）不设 ENV：
 #   pi CLI 启动时自己设置这两个标记，子进程（bash 工具、MCP server 等）自动继承；
