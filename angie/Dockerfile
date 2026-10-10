@@ -4,8 +4,8 @@ FROM alpine:3.22 AS builder
 
 ARG CONSOLE_LIGHT_VERSION
 
-ENV TONGSUO_VERSION=8.5.0-pre2 \
-    TONGSUO_SHA256=540603a3ff952ce00590bca022015feffbfb7597 \
+ENV TONGSUO_VERSION=8.5.0 \
+    TONGSUO_SHA256=80cfbe3eb194a4d30da90742273c305ad4d096be \
     ANGIE_VERSION=1.12.2 \
     ANGIE_SHA256=4f0a51b1de8dd9f09248b2845bbfa4df4f034877bf92f605e499fd7fff09c77c \
     PCRE2_VERSION=10.45 \
@@ -23,6 +23,8 @@ RUN apk add --no-cache \
     cmake \
     pcre2-dev \
     zlib-dev \
+    # enable-brotli / enable-zstd 需要系统依赖库的头文件和库
+    brotli-dev zstd-dev \
     libxml2-dev \
     libxslt-dev
 
@@ -31,44 +33,56 @@ WORKDIR /tmp
 # Clone Tongsuo（8.5.0 基于 OpenSSL 3.5，内置 QUIC（RFC9000）/0-RTT，原生支持 HTTP/3，无需 QuicTLS/BoringSSL）
 RUN git init tongsuo-$TONGSUO_VERSION \
     && git -C tongsuo-$TONGSUO_VERSION remote add origin https://github.com/tongsuo-project/tongsuo.git \
-    && git -C tongsuo-$TONGSUO_VERSION fetch --depth 1 origin $TONGSUO_SHA256 \
+    && for i in 1 2 3; do \
+        git -C tongsuo-$TONGSUO_VERSION fetch --depth 1 origin $TONGSUO_SHA256 \
+     && break; \
+        echo "tongsuo fetch failed, retry $i"; sleep 5; \
+    done \
     && git -C tongsuo-$TONGSUO_VERSION checkout --detach FETCH_HEAD
 
 # Download and extract Angie source（校验 SHA256）
-RUN curl -fL -o angie-$ANGIE_VERSION.tar.gz \
+RUN curl -fL --retry 3 --retry-delay 2 -o angie-$ANGIE_VERSION.tar.gz \
     https://download.angie.software/files/angie-$ANGIE_VERSION.tar.gz \
     && echo "$ANGIE_SHA256  angie-$ANGIE_VERSION.tar.gz" | sha256sum -c - \
     && tar -xzf angie-$ANGIE_VERSION.tar.gz
 
 # Download and extract PCRE2 source (built statically with JIT for regex performance, 校验 SHA256)
-RUN curl -fL -o pcre2-$PCRE2_VERSION.tar.gz \
+RUN curl -fL --retry 3 --retry-delay 2 -o pcre2-$PCRE2_VERSION.tar.gz \
     https://github.com/PCRE2Project/pcre2/releases/download/pcre2-$PCRE2_VERSION/pcre2-$PCRE2_VERSION.tar.gz \
     && echo "$PCRE2_SHA256  pcre2-$PCRE2_VERSION.tar.gz" | sha256sum -c - \
     && tar -xzf pcre2-$PCRE2_VERSION.tar.gz
 
 # angie-console-light 是纯前端产物（官方已提供预编译包，校验 SHA256）
-RUN curl -fL -o angie-console-light.tar.gz \
+RUN curl -fL --retry 3 --retry-delay 2 -o angie-console-light.tar.gz \
     https://download.angie.software/files/angie-console-light/angie-console-light-$CONSOLE_LIGHT_VERSION.tar.gz \
     && echo "$CONSOLE_LIGHT_SHA256  angie-console-light.tar.gz" | sha256sum -c - \
     && tar -xzf angie-console-light.tar.gz
 
 # Clone third-party dynamic module sources
-RUN git clone --recurse-submodules --depth 1 \
-        https://github.com/google/ngx_brotli.git \
-    && git clone --depth 1 \
-        https://github.com/openresty/headers-more-nginx-module.git \
-    && git clone --depth 1 \
-        https://github.com/openresty/echo-nginx-module.git \
-    && git clone --depth 1 \
-        https://github.com/yaoweibin/ngx_http_substitutions_filter_module.git \
-    && git clone --depth 1 \
-        https://github.com/nginx-modules/ngx_cache_purge.git \
-    && git clone --depth 1 \
-        https://github.com/arut/nginx-dav-ext-module.git \
-    && git clone --depth 1 \
-        https://github.com/simpl/ngx_devel_kit.git \
-    && git clone --depth 1 \
-        https://github.com/openresty/set-misc-nginx-module.git
+# github.com 直连偶发 TLS 断链，用重试循环兜底
+RUN for i in 1 2 3 4; do \
+        git clone --recurse-submodules --depth 1 \
+            https://github.com/google/ngx_brotli.git \
+     && git clone --depth 1 \
+            https://github.com/openresty/headers-more-nginx-module.git \
+     && git clone --depth 1 \
+            https://github.com/openresty/echo-nginx-module.git \
+     && git clone --depth 1 \
+            https://github.com/yaoweibin/ngx_http_substitutions_filter_module.git \
+     && git clone --depth 1 \
+            https://github.com/nginx-modules/ngx_cache_purge.git \
+     && git clone --depth 1 \
+            https://github.com/arut/nginx-dav-ext-module.git \
+     && git clone --depth 1 \
+            https://github.com/simpl/ngx_devel_kit.git \
+     && git clone --depth 1 \
+            https://github.com/openresty/set-misc-nginx-module.git \
+     && break; \
+        echo "clone failed, retry $i"; sleep 5; \
+        rm -rf ngx_brotli headers-more-nginx-module echo-nginx-module \
+               ngx_http_substitutions_filter_module ngx_cache_purge \
+               nginx-dav-ext-module ngx_devel_kit set-misc-nginx-module; \
+    done
 
 # Build brotli C library (required by ngx_brotli filter module)
 RUN cd /tmp/ngx_brotli/deps/brotli \
@@ -132,9 +146,9 @@ RUN ./configure \
     --with-threads \
     --with-pcre=../pcre2-$PCRE2_VERSION \
     --with-pcre-jit \
-    --with-ld-opt='-Wl,--as-needed,-O1,--sort-common -Wl,-z,pack-relative-relocs' \
+    --with-ld-opt='-Wl,--as-needed,-O1,--sort-common -Wl,-z,pack-relative-relocs -Wl,--no-as-needed -lbrotlienc -lbrotlidec -lbrotlicommon -lzstd -Wl,--as-needed -lm' \
     --with-openssl=../tongsuo-$TONGSUO_VERSION \
-    --with-openssl-opt=enable-ntls \
+    --with-openssl-opt='enable-ntls enable-ec_elgamal enable-sm2 enable-sm3 enable-sm4 enable-brotli enable-zstd enable-zlib' \
     --with-ntls \
     --builddir=objs-nodebug \
     --feature-cache=../angie-feature-cache \
@@ -203,9 +217,9 @@ RUN ./configure \
     --with-threads \
     --with-pcre=../pcre2-$PCRE2_VERSION \
     --with-pcre-jit \
-    --with-ld-opt='-Wl,--as-needed,-O1,--sort-common -Wl,-z,pack-relative-relocs' \
+    --with-ld-opt='-Wl,--as-needed,-O1,--sort-common -Wl,-z,pack-relative-relocs -Wl,--no-as-needed -lbrotlienc -lbrotlidec -lbrotlicommon -lzstd -Wl,--as-needed -lm' \
     --with-openssl=../tongsuo-$TONGSUO_VERSION \
-    --with-openssl-opt=enable-ntls \
+    --with-openssl-opt='enable-ntls enable-ec_elgamal enable-sm2 enable-sm3 enable-sm4 enable-brotli enable-zstd enable-zlib' \
     --with-ntls \
     --builddir=objs-debug \
     --feature-cache=../angie-feature-cache \
@@ -229,7 +243,7 @@ LABEL org.opencontainers.image.authors="Jianlu <jianlu8023@gmail.com>; Release E
 
 # Install runtime dependencies and create angie user
 RUN set -x \
-    && apk add --no-cache bash ca-certificates curl pcre2 zlib tzdata \
+    && apk add --no-cache bash ca-certificates curl pcre2 zlib brotli zstd tzdata \
     && ln -sf /usr/share/zoneinfo/Asia/Shanghai /etc/localtime \
     && echo "Asia/Shanghai" > /etc/timezone \
     && adduser -D -H -u 101 -s /sbin/nologin angie

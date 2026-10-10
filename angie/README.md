@@ -4,8 +4,8 @@
 
 | Dockerfile | SSL 库 | 国密 NTLS | HTTP/3 | 说明 |
 |---|---|---|---|---|
-| `Dockerfile` | 铜锁 8.5.0-pre2 (OpenSSL 3.5) | 支持 | 完整（含 0-RTT） | 国密主力镜像 |
-| `Dockerfile-template` | 铜锁 8.5.0-pre2 (OpenSSL 3.5) | 支持 | 完整（含 0-RTT） | 同上 + gomplate 模板渲染 |
+| `Dockerfile` | 铜锁 8.5.0 (OpenSSL 3.5) | 支持 | 完整（含 0-RTT） | 国密主力镜像 |
+| `Dockerfile-template` | 铜锁 8.5.0 (OpenSSL 3.5) | 支持 | 完整（含 0-RTT） | 同上 + gomplate 模板渲染 |
 
 
 ## 快速开始
@@ -63,7 +63,7 @@ configure arguments: --prefix=/etc/angie --conf-path=/etc/angie/angie.conf --err
 --with-mail_ssl_module --with-stream --with-stream_acme_module --with-stream_mqtt_preread_module 
 --with-stream_rdp_preread_module --with-stream_realip_module --with-stream_ssl_module --with-stream_ssl_preread_module 
 --with-threads --with-ld-opt='-Wl,--as-needed,-O1,--sort-common -Wl,-z,pack-relative-relocs' 
---with-openssl=../tongsuo-8.5.0-pre2 --with-openssl-opt=enable-ntls --with-ntls --add-dynamic-module=../ngx_brotli 
+--with-openssl=../tongsuo-8.5.0 --with-openssl-opt='enable-ntls enable-ec_elgamal enable-sm2 enable-sm3 enable-sm4 enable-brotli enable-zstd enable-zlib' --with-ntls --add-dynamic-module=../ngx_brotli 
 --add-dynamic-module=../headers-more-nginx-module --add-dynamic-module=../echo-nginx-module 
 --add-dynamic-module=../ngx_http_substitutions_filter_module --add-dynamic-module=../ngx_cache_purge 
 --add-dynamic-module=../nginx-dav-ext-module --add-dynamic-module=../ngx_devel_kit 
