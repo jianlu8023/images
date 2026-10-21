@@ -1,0 +1,56 @@
+# ==============================================================================
+# NTLS / 国密 TLCP 参考配置（8099 端口，Tongsuo 8.5.0 + Angie ssl_ntls）
+#
+# 本文件是【模板】，默认不加载（后缀 .example）。启用步骤：
+#   1. 准备证书（scripts/mkcert-sm2.sh 与 mkcert-rsa.sh 生成后挂载进容器）：
+#        /etc/angie/certs/sm2/hserver_sign-chain.crt   国密签名证书（含链）
+#        /etc/angie/certs/sm2/hserver_sign.key
+#        /etc/angie/certs/sm2/hserver_enc-chain.crt    国密加密证书（含链）
+#        /etc/angie/certs/sm2/hserver_enc.key
+#        /etc/angie/certs/rsa/hserver-chain.crt        RSA 证书（供标准 TLS 客户端）
+#        /etc/angie/certs/rsa/hserver.key
+#   2. 复制本文件为 /etc/angie/http.d/ntls-8099.conf
+#   3. 按实际环境修改 listen 端口与 server_name，然后 reload
+#
+# 说明:
+#   - ssl_ntls on 是双模式: 同一 vhost 同时服务 NTLSv1.1 (国密双证书) 与标准
+#     TLS1.2/1.3; 国密客户端走 sign/enc 双证书, 标准浏览器走 RSA 证书
+#   - 一个端口只能挂一个国密站点: NTLS 握手只用 default vhost 的证书
+#   - sub_filter 需要 ngx_http_subs_filter_module (镜像已内置, angie.conf 顶部
+#     的 load_module 需去掉注释), 占位符见对应目录的 index.html
+# ==============================================================================
+
+# /etc/angie/http.d/ntls-8099-gm.conf.example
+
+server {
+    error_log /var/log/angie/ntls-8099-gm.log info;
+    # 监听 8099 端口并开启 SSL
+    listen 8099 ssl;
+    server_name localhost;
+
+    # 1. 启用 NTLS (国密协议)
+    ssl_ntls on;
+
+    # 2. 配置国密算法证书 (签名证书与加密证书分离)
+    # 请确保将实际的证书文件放在对应路径下
+    ssl_certificate     /etc/angie/certs/sm2/hserver_sign-chain.crt /etc/angie/certs/sm2/hserver_enc-chain.crt;
+    ssl_certificate_key /etc/angie/certs/sm2/hserver_sign.key /etc/angie/certs/sm2/hserver_enc.key;
+
+    # 3. 配置标准 RSA 算法证书
+    # 用于不支持国密算法的国际主流浏览器 (如 Chrome, Edge, Firefox)
+    ssl_certificate     /etc/angie/certs/rsa/hserver-chain.crt;
+    ssl_certificate_key /etc/angie/certs/rsa/hserver.key;
+
+    # 4. 配置加密套件与协议
+    # 确保包含国密套件，同时兼容标准 TLS 套件
+    ssl_ciphers ECC-SM2-SM4-CBC-SM3:ECDHE-SM2-WITH-SM4-SM3:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-RSA-AES128-SHA256:AES128-GCM-SHA256:AES256-GCM-SHA384:!aNULL:!eNULL:!RC4:!DES:!3DES:!MD5:!DSS:!PKS;
+    # ssl_protocols TLSv1 TLSv1.1 TLSv1.2 TLSv1.3;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_prefer_server_ciphers on;
+
+    # 5. 默认首页配置
+    location / {
+        root /usr/share/angie/html;
+        index index.html index.htm;
+    }
+}

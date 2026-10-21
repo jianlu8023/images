@@ -1,6 +1,6 @@
 # angie-docker
 
-## 三种镜像变体
+## 镜像变体
 
 | Dockerfile | SSL 库 | 国密 NTLS | HTTP/3 | 说明 |
 |---|---|---|---|---|
@@ -70,41 +70,42 @@ configure arguments: --prefix=/etc/angie --conf-path=/etc/angie/angie.conf --err
 --add-dynamic-module=../set-misc-nginx-module
 ```
 
-## NTLS（国密）站点
+## NTLS 站点部署与验证
 
-### 规则
+`http.d/ntls-8099-gm.conf.example` 是一个可直接启用的国密示例站点（8099 端口，NTLS + 标准 TLS 双模式），配套 `http.d/rfc8998-gm.conf.example`（8100 端口，RFC8998 GM TLS1.3 单证书）。启用步骤：
 
-1. **一个端口只能挂一个国密站点**：NTLS 握手只发生在 default vhost 的 SSL_CTX/证书上（SNI 路由在握手之后才生效），所以 default vhost 本身必须就是 `sign:/enc:` 双证书的 NTLS vhost；
-2. **双证书必须用 `sign:`/`enc:` 前缀**（不是空格分隔——两条 `ssl_certificate` 只有第一条生效，且无后缀双证书 vhost 实测只服务国密）；
-3. **`ssl_ntls on` 是双模式**：不关闭标准 TLS，同一 vhost 仍服务 TLS1.2/1.3（含 `TLS_SM4_GCM_SM3` 国套件）；
-4. **`ssl_protocols` 不影响 NTLS 协商**（NTLSv1.1 总能协商成功）。
+1. **生成证书**：在宿主机建两个证书目录，分别运行 `scripts/mkcert-sm2.sh`（国密双证书 + RFC8998 单证书）和 `scripts/mkcert-rsa.sh`（RSA 证书），CN/SAN 默认 `*.testsm2.selfsign` / `*.testrsa.selfsign` + `localhost` + `127.0.0.1`（改 `scripts/*.sh` 顶部变量区后重新生成）；
+2. **挂载并启用**：
 
-参考模板已内置在镜像 `/etc/angie/http.d/ntls-gm.conf.example`（仓库 `http.d/ntls-gm.conf.example`），启用国密 443 时改为 `.conf` 并填证书路径：
-
-```nginx
-server {
-    # ★ NTLS 握手只用 default vhost 的证书：一端口一国密站点
-    listen 443 ssl default_server;
-    server_name gm.example.com;
-
-    ssl_ntls on;
-    # 签名/加密双证书（sign:/enc: 前缀，顺序：签名在前）
-    ssl_certificate sign:/etc/angie/certs/sm2/server_sign.crt
-                  enc:/etc/angie/certs/sm2/server_enc.crt;
-    ssl_certificate_key sign:/etc/angie/certs/sm2/server_sign.key
-                  enc:/etc/angie/certs/sm2/server_enc.key;
-    # 实测可用的 TLCP（NTLSv1.1）套件
-    ssl_ciphers "ECDHE-SM2-SM4-GCM-SM3:ECC-SM2-SM4-GCM-SM3:ECDHE-SM2-SM4-CBC-SM3:ECC-SM2-SM4-CBC-SM3";
-    ssl_protocols TLSv1.2 TLSv1.3;
-    ssl_prefer_server_ciphers on;
-
-    location / { root /usr/share/angie/html; }
-}
+```shell
+docker run --rm --name angie-ntls \
+  -p 8099:8099 -p 8100:8100 \
+  -v certs-sm2:/etc/angie/certs/sm2 -v certs-rsa:/etc/angie/certs/rsa \
+  -v ntls-8099.conf:/etc/angie/http.d/ntls-8099.conf \
+  -v rfc8998-8100.conf:/etc/angie/http.d/rfc8998-8100.conf \
+  angie:ntls-alpine
 ```
+
+   即把两个 `.example` 复制为 `ntls-8099.conf` / `rfc8998-8100.conf` 挂入 `http.d`，证书文件放到 `/etc/angie/certs/sm2` 与 `/etc/angie/certs/rsa`：
+
+   | 文件 | 来源 |
+   |---|---|
+   | `sm2/hserver_sign-chain.crt` + `hserver_sign.key` | mkcert-sm2.sh（NTLS 签名证书，含链） |
+   | `sm2/hserver_enc-chain.crt` + `hserver_enc.key` | mkcert-sm2.sh（NTLS 加密证书，含链） |
+   | `sm2/hserver_single-chain.crt` + `hserver_single.key` | mkcert-sm2.sh（RFC8998 单证书，含链） |
+   | `rsa/hserver-chain.crt` + `hserver.key` | mkcert-rsa.sh（标准 TLS 证书，含链） |
+
+3. **验证**：
+   - 标准 TLS（Chrome/Edge/Firefox/curl，需信任根 CA 或忽略告警）：`curl -vk --resolve www.testrsa.selfsign:8099:127.0.0.1 https://www.testrsa.selfsign:8099/`
+   - NTLS 国密：标准 curl 不支持，需用铜锁/国密客户端访问 `https://www.testsm2.selfsign:8099/`（或 `https://localhost:8099/`），；
+   - RFC8998：见下方“测试说明”。
+
+> 证书 SAN 默认覆盖 `localhost` / `127.0.0.1` / `*.testsm2.selfsign` / `*.testrsa.selfsign`；浏览器直接访问 `https://localhost:8099` 可验证标准 TLS 路径，国密路径必须用国密客户端。
 
 ![GM证书](images/gmtls.png)
 
 ![RSA证书](images/tls.png)
+
 
 ## HTTP/3 配置参考
 
@@ -138,43 +139,32 @@ server {
 curl -v --http3 https://your-server.example   # 看到 "using HTTP/3" 即成功
 ```
 
-
-## ssl-gm.conf 参考
-
-```shell
-# /etc/angie/http.d/ssl-gm.conf
-
-server {
-    # 监听 8099 端口并开启 SSL                                                                                               
-    listen 8099 ssl;                                                                                                         
-    server_name localhost;
-    # 1. 启用 NTLS (国密协议)                                                                                                
-    ssl_ntls on;
-
-    # 2. 配置国密算法证书 (签名证书与加密证书分离) 请确保将实际的证书文件放在对应路径下
-    ssl_certificate     /etc/angie/certs/gm/server_sign.crt /etc/angie/certs/gm/server_enc.crt; 
-    ssl_certificate_key /etc/angie/certs/gm/server_sign.key /etc/angie/certs/gm/server_enc.key;
-
-    # 3. 配置标准 RSA 算法证书
-    # 用于不支持国密算法的国际主流浏览器 (如 Chrome, Edge, Firefox)
-    ssl_certificate     /etc/angie/certs/rsa/hserver.crt;
-    ssl_certificate_key /etc/angie/certs/rsa/hserver.key;
-
-    # 4. 配置加密套件与协议
-    # 确保包含国密套件，同时兼容标准 TLS 套件
-    ssl_ciphers ECC-SM2-SM4-CBC-SM3:ECDHE-SM2-WITH-SM4-SM3:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-RSA-AES128-SHA256:AES128-GCM-SHA256:AES256-GCM-SHA384:!aNULL:!eNULL:!RC4:!DES:!3DES:!MD5:!DSS:!PKS;
-    ssl_protocols TLSv1 TLSv1.1 TLSv1.2 TLSv1.3;
-    ssl_prefer_server_ciphers on;
-
-    # 5. 默认首页配置 (使用 Angie 默认的 index.html)
-    location / {
-        root /usr/share/angie/html;
-        index index.html index.htm;
-    }
-}
-```
-
 ## 安全说明
 
 - `/status/`（stub_status）与 `/console/`、`/console/api/` 在 `http.d/default.conf` 中均限制为 `allow 127.0.0.1; deny all;`，需要外部访问时请改为实际内网段并配合反向代理认证；
 - 建议 HTTPS 站点加 HSTS：`add_header Strict-Transport-Security "max-age=31536000" always;`
+
+## 测试说明
+
+1. **测试环境**：证书 SAN 覆盖 `localhost` / `127.0.0.1` / `*.testsm2.selfsign` / `*.testrsa.selfsign`；宿主机按“NTLS 站点部署与验证”一节挂载证书与示例页面，容器同时暴露 8099（NTLS）与 8100（RFC8998）；
+2. **标准 TLS**：`curl -vk https://localhost:8099/` 或 openssl s_client 验证 RSA 证书路径：
+
+```shell
+openssl s_client -connect 127.0.0.1:8099 -servername localhost -CAfile root-intermediate-chain.crt
+# 期望: subject=CN=localhost 的 RSA 证书, Protocol: TLSv1.3, Cipher: ECDHE-RSA-AES... 等标准套件
+```
+
+3. **NTLS 国密（8099）**：
+   - 铜锁/国密客户端（国密版 curl、tongsuo s_client、国密浏览器）访问 `https://localhost:8099/`，握手成功且页面显示 NTLSv1.1 + SM2/SM4 国密套件；
+   - 同一 vhost 上标准浏览器走 TLS1.3 + RSA 套件，两条路径互不影响；
+   - 证书链验证：`tongsuo verify -CAfile http-full-chain.crt hserver_sign.crt`（mkcert-sm2.sh 末尾已自动验证）；
+4. **RFC8998 GM TLS1.3（8100）**：
+   - 测试需下载 360 安全浏览器并在设置中打开“支持 rfc8998”开关 https://browser.360.net/gc/index.html （标准浏览器不支持 RFC8998 套件，无法访问）；
+   - 官方测试站：https://rfc8998.badgmssl.com/ 与 https://rfc8998only.badgmssl.com/ ；
+   - 构建的 angie 若已启用 `rfc8998-8100.conf`（由 `rfc8998-gm.conf.example` 复制而来），也可访问 https://127.0.0.1:8100 用来测试，页面会显示实际协商的协议（应为 TLSv1.3）与套件（TLS_SM4_GCM_SM3 / TLS_SM4_CCM_SM3）；
+   - openssl 命令行快速确认服务端只协商 RFC8998 套件：
+
+```shell
+openssl s_client -connect 127.0.0.1:8100 -tls1_3 -ciphersuites TLS_SM4_GCM_SM3
+# 期望: Protocol: TLSv1.3, Cipher: TLS_SM4_GCM_SM3
+``` 

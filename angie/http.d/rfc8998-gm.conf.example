@@ -1,0 +1,43 @@
+# ==============================================================================
+# RFC8998 (GM TLS 1.3) 参考配置（8100 端口，国密单证书，Tongsuo 8.5.0）
+#
+# 本文件是【模板】，默认不加载（后缀 .example）。启用步骤：
+#   1. 准备 RFC8998 国密单证书（mkcert-sm2.sh 生成的 hserver_single，
+#      RFC8998 §3.3.3 要求 keyUsage 含 digitalSignature + keyEncipherment）：
+#        /etc/angie/certs/sm2/hserver_single-chain.crt
+#        /etc/angie/certs/sm2/hserver_single.key
+#   2. 复制本文件为 /etc/angie/http.d/rfc8998-8100.conf
+#   3. 按实际环境修改 listen 端口与 server_name，然后 reload
+#
+# 注意:
+#   - 不启用 ssl_ntls (那是 NTLS 国密双证书模式), 此处走标准 TLSv1.3 协商 RFC8998 套件
+#   - TLS1.3 套件不走 ssl_ciphers (SSL_CTX_set_cipher_list, Tongsuo 8.5.0 中 "no cipher match"),
+#     需经 ssl_conf_command 映射到 SSL_CTX_set_ciphersuites
+#   - 客户端需支持 RFC8998 (如 360 安全浏览器开启 rfc8998 开关), 标准浏览器无法访问
+# ==============================================================================
+
+# /etc/angie/http.d/rfc8998-gm.conf.example
+# RFC8998 (GM TLS 1.3) 验证服务: 国密单证书
+# 套件: TLS_SM4_GCM_SM3 (0x00C6) / TLS_SM4_CCM_SM3 (0x00C7)
+
+server {
+    error_log /var/log/angie/rfc8998-gm.log info;
+
+    listen 8100 ssl;
+    server_name localhost;
+
+    # RFC8998 国密 SM2 单证书 (subject/SAN 与 8099 双证书一致)
+    ssl_certificate     /etc/angie/certs/sm2/hserver_single-chain.crt;
+    ssl_certificate_key /etc/angie/certs/sm2/hserver_single.key;
+
+    # 仅 RFC8998 国密 TLS1.3 套件
+    ssl_conf_command Ciphersuites TLS_SM4_GCM_SM3:TLS_SM4_CCM_SM3;
+    ssl_protocols TLSv1.3;
+
+    ssl_session_timeout 5m;
+
+    location / {
+        root /usr/share/angie/html;
+        index index.html index.htm;
+    }
+}

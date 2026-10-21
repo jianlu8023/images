@@ -284,14 +284,15 @@ RUN mkdir -p /etc/periodic/daily /var/lib/logrotate \
 # Copy configuration files
 COPY angie.conf /etc/angie/
 COPY http.d/default.conf /etc/angie/http.d/
-# NTLS 参考站点模板
-COPY http.d/ntls-gm.conf.example /etc/angie/http.d/
+# 参考站点模板 (启用时复制为 .conf 并按需修改)
+COPY http.d/ntls-8099-gm.conf.example /etc/angie/http.d/
+COPY http.d/rfc8998-gm.conf.example /etc/angie/http.d/
 COPY stream.d/example.conf /etc/angie/stream.d/
 COPY angie.conf.template /etc/angie/templates/angie.conf
 COPY init /
 RUN chmod +x /init
 
-# 80/443 TCP + 443 UDP（HTTP/3 必须）
+# 80/443 TCP + 443 UDP（HTTP/3 必须）；8099/8100 为 http.d 示例站点 (ntls-8099 / rfc8998-8100)
 EXPOSE 80 443 443/udp
 
 ENTRYPOINT ["/init"]
