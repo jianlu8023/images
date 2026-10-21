@@ -1,8 +1,6 @@
 {
+  "$schema": "https://pi.dev/schemas/settings.schema.json",
   "theme": "dark",
-  "extensions": [
-    "-builtin:mcp"
-  ],
   "compaction": {
     "enabled": true,
     "reserveTokens": 62000,
@@ -19,8 +17,6 @@
       "maxRetryDelayMs": 60000
     }
   },
-  "cacheWarming": "idle",
-  "showCacheMissNotices": true,
   "thinkingBudgets": {
     "minimal": 1024,
     "low": 4096,
@@ -30,5 +26,17 @@
   "branchSummary": {
     "reserveTokens": 16384,
     "skipPrompt": false
-  }
+  },
+  "extensions": [
+    "builtin:codemode"
+  ],
+  "defaultTools": [
+    "+codemode",
+    "-builtin:mcp"
+  ],
+  "cacheWarming": "idle",
+  "showCacheMissNotices": true,
+  "hideThinkingBlock": false,
+  "cacheWarming": "off",
+  "quietStartup": "header"
 }
