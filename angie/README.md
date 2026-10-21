@@ -1,5 +1,13 @@
 # angie-docker
 
+## 官方镜像名
+
+```shell
+# 支持minimal xxx-alpine
+docker pull docker.angie.software/angie:1.12.2-alpine
+# 官网 https://en.angie.software
+```
+
 ## 镜像变体
 
 | Dockerfile | SSL 库 | 国密 NTLS | HTTP/3 | 说明 |
