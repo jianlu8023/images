@@ -4,7 +4,7 @@
 
 ```shell
 # 支持minimal xxx-alpine
-docker pull docker.angie.software/angie:1.12.2-alpine
+docker pull docker.angie.software/angie:1.12.5-alpine
 # 官网 https://en.angie.software
 ```
 
@@ -52,11 +52,11 @@ docker run --rm --name angie-h3 \
 
 ```text
 angie -V
-Angie version: Angie/1.12.2
+Angie version: Angie/1.12.5
 nginx version: nginx/1.31.2
-built on Fri, 28 Aug 2026 05:26:45 GMT
-built by gcc 14.2.0 (Alpine 14.2.0)
-built with OpenSSL 3.5 3 Aug 2026
+built on Mon, 23 Nov 2026 03:36:12 GMT
+built by gcc 14.2.0 (Alpine 14.2.0) 
+built with OpenSSL 3.5.4 30 Sep 2026
 TLS SNI support enabled
 configure arguments: --prefix=/etc/angie --conf-path=/etc/angie/angie.conf --error-log-path=/var/log/angie/error.log 
 --http-log-path=/var/log/angie/access.log --lock-path=/run/angie.lock --modules-path=/usr/lib/angie/modules 
@@ -70,8 +70,10 @@ configure arguments: --prefix=/etc/angie --conf-path=/etc/angie/angie.conf --err
 --with-http_stub_status_module --with-http_sub_module --with-http_v2_module --with-http_v3_module --with-mail 
 --with-mail_ssl_module --with-stream --with-stream_acme_module --with-stream_mqtt_preread_module 
 --with-stream_rdp_preread_module --with-stream_realip_module --with-stream_ssl_module --with-stream_ssl_preread_module 
---with-threads --with-ld-opt='-Wl,--as-needed,-O1,--sort-common -Wl,-z,pack-relative-relocs' 
---with-openssl=../tongsuo-8.5.0 --with-openssl-opt='enable-ntls enable-ec_elgamal enable-sm2 enable-sm3 enable-sm4 enable-brotli enable-zstd enable-zlib' --with-ntls --add-dynamic-module=../ngx_brotli 
+--with-threads --with-pcre=../pcre2-10.45 --with-pcre-jit 
+--with-ld-opt='-Wl,--as-needed,-O1,--sort-common -Wl,-z,pack-relative-relocs -Wl,--no-as-needed -lbrotlienc -lbrotlidec -lbrotlicommon -lzstd -Wl,--as-needed -lm' 
+--with-openssl=../tongsuo-8.5.0 --with-openssl-opt='enable-ntls enable-ec_elgamal enable-sm2 enable-sm3 enable-sm4 enable-brotli enable-zstd enable-zlib' --with-ntls --builddir=objs-nodebug 
+--feature-cache=../angie-feature-cache --add-dynamic-module=../ngx_brotli 
 --add-dynamic-module=../headers-more-nginx-module --add-dynamic-module=../echo-nginx-module 
 --add-dynamic-module=../ngx_http_substitutions_filter_module --add-dynamic-module=../ngx_cache_purge 
 --add-dynamic-module=../nginx-dav-ext-module --add-dynamic-module=../ngx_devel_kit 
